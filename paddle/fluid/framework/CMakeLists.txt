@@ -28,6 +28,7 @@ add_subdirectory(io)
 #ddim lib
 proto_library(framework_proto SRCS framework.proto)
 proto_library(data_feed_proto SRCS data_feed.proto)
+proto_library(async_executor_proto SRCS data_feed.proto)
 proto_library(trainer_desc_proto SRCS trainer_desc.proto DEPS framework_proto
   data_feed_proto)
 
@@ -40,20 +41,26 @@ cc_test(data_type_test SRCS data_type_test.cc DEPS data_type place tensor)
 if(WITH_GPU)
   if (WIN32)
     windows_symbolic(tensor_util SRCS tensor_util.cu)
-    nv_library(tensor SRCS tensor.cc .tensor_util.cu DEPS place memory data_type device_context)
+    nv_library(tensor SRCS tensor.cc .tensor_util.cu DEPS place memory
+data_type device_context)
     add_dependencies(tensor tensor_util)
   else()
-    nv_library(tensor SRCS tensor.cc tensor_util.cu DEPS place memory data_type device_context profiler)
+    nv_library(tensor SRCS tensor.cc tensor_util.cu DEPS place memory
+data_type device_context profiler) 
   endif(WIN32)
 else()
-  cc_library(tensor SRCS tensor.cc tensor_util.cc DEPS place memory data_type device_context profiler)
+  cc_library(tensor SRCS tensor.cc tensor_util.cc DEPS place memory data_type
+device_context profiler)
 endif()
 
 cc_test(tensor_test SRCS tensor_test.cc DEPS tensor)
+cc_library(dlpack_tensor SRCS dlpack_tensor.cc DEPS tensor dlpack)
 if(WITH_GPU)
-  nv_test(tensor_util_test SRCS tensor_util_test.cc tensor_util_test.cu DEPS tensor)
+  nv_test(tensor_util_test SRCS tensor_util_test.cc tensor_util_test.cu DEPS
+tensor dlpack_tensor)
 else()
-  cc_test(tensor_util_test SRCS tensor_util_test.cc DEPS tensor)
+  cc_test(tensor_util_test SRCS tensor_util_test.cc DEPS tensor
+dlpack_tensor)
 endif()
 
 cc_test(eigen_test SRCS eigen_test.cc DEPS tensor)
@@ -63,7 +70,7 @@ if(WITH_GPU)
 else()
   cc_test(mixed_vector_test SRCS mixed_vector_test.cc DEPS place memory device_context tensor)
 endif()
-cc_library(lod_tensor SRCS lod_tensor.cc DEPS ddim place tensor framework_proto version)
+cc_library(lod_tensor SRCS lod_tensor.cc DEPS ddim place tensor framework_proto recordio version)
 
 cc_test(lod_tensor_test SRCS lod_tensor_test.cc DEPS lod_tensor memory)
 nv_test(lod_tensor_gpu_test SRCS lod_tensor_test.cu DEPS lod_tensor)
@@ -123,8 +130,8 @@ cc_library(shape_inference SRCS shape_inference.cc DEPS ddim attribute device_co
 
 cc_library(transfer_scope_cache SRCS transfer_scope_cache.cc DEPS scope framework_proto device_context)
 cc_library(op_kernel_type SRCS op_kernel_type.cc DEPS device_context place)
-cc_library(operator SRCS operator.cc DEPS op_info device_context tensor scope
-  glog box_wrapper shape_inference data_transform lod_tensor profiler transfer_scope_cache op_kernel_type op_call_stack)
+cc_library(operator SRCS operator.cc DEPS op_info device_context tensor scope glog
+    shape_inference data_transform lod_tensor profiler transfer_scope_cache op_kernel_type op_call_stack)
 
 cc_test(operator_test SRCS operator_test.cc DEPS operator op_registry device_context)
 
@@ -133,7 +140,7 @@ cc_test(version_test SRCS version_test.cc DEPS version)
 
 cc_library(proto_desc SRCS var_desc.cc op_desc.cc block_desc.cc program_desc.cc DEPS shape_inference op_info operator glog version)
 
-cc_library(op_registry SRCS op_registry.cc DEPS op_proto_maker op_info operator glog proto_desc)
+cc_library(op_registry SRCS op_registry.cc DEPS op_proto_maker op_info operator glog proto_desc memory_optimize_helper)
 
 cc_library(op_call_stack SRCS op_call_stack.cc DEPS op_proto_maker enforce)
 
@@ -179,8 +186,8 @@ if(WITH_DISTRIBUTE)
   dist_multi_trainer.cc trainer_factory.cc trainer.cc data_feed_factory.cc
   data_feed.cc device_worker.cc hogwild_worker.cc downpour_worker.cc
   pull_dense_worker.cc section_worker.cc device_worker_factory.cc data_set.cc DEPS op_registry
-  device_context scope framework_proto trainer_desc_proto glog fs shell fleet_wrapper box_wrapper lodtensor_printer
-  lod_rank_table feed_fetch_method sendrecvop_rpc collective_helper ${GLOB_DISTRIBUTE_DEPS}
+  device_context scope framework_proto trainer_desc_proto glog fs shell fleet_wrapper lodtensor_printer
+  lod_rank_table feed_fetch_method sendrecvop_rpc  ${GLOB_DISTRIBUTE_DEPS}
   graph_to_program_pass variable_helper data_feed_proto ${NGRAPH_EXE_DEPS} timer)
 set(DISTRIBUTE_COMPILE_FLAGS "-Wno-non-virtual-dtor -Wno-error=non-virtual-dtor -Wno-error=delete-non-virtual-dtor")
 set_source_files_properties(executor.cc PROPERTIES COMPILE_FLAGS ${DISTRIBUTE_COMPILE_FLAGS})
@@ -190,22 +197,35 @@ else()
   data_feed.cc device_worker.cc hogwild_worker.cc downpour_worker.cc
   pull_dense_worker.cc section_worker.cc device_worker_factory.cc data_set.cc DEPS op_registry
   device_context scope framework_proto data_feed_proto trainer_desc_proto glog
-  lod_rank_table fs shell fleet_wrapper box_wrapper lodtensor_printer feed_fetch_method
-  graph_to_program_pass variable_helper ${NGRAPH_EXE_DEPS} timer)
+  lod_rank_table fs shell fleet_wrapper lodtensor_printer feed_fetch_method
+  graph_to_program_pass variable_helper ${NGRAPH_EXE_DEPS} timer data_feed_proto)
   cc_test(test_naive_executor SRCS naive_executor_test.cc DEPS naive_executor elementwise_add_op)
 endif()
 
-target_link_libraries(executor while_op_helper executor_gc_helper recurrent_op_helper conditional_block_op_helper)
+target_link_libraries(executor while_op_helper executor_gc_helper recurrent_op_helper)
 
 cc_library(parallel_executor SRCS parallel_executor.cc DEPS
         threaded_ssa_graph_executor scope_buffered_ssa_graph_executor parallel_ssa_graph_executor async_ssa_graph_executor
         graph build_strategy
         fast_threaded_ssa_graph_executor variable_helper)
 
+cc_library(async_executor SRCS async_executor.cc data_feed.cc data_feed_factory.cc
+           executor_thread_worker.cc multi_trainer.cc dist_multi_trainer.cc pipeline_trainer.cc
+           trainer_factory.cc trainer.cc device_worker.cc hogwild_worker.cc
+           downpour_worker.cc pull_dense_worker.cc section_worker.cc 
+           device_worker_factory.cc data_set.cc dataset_factory.cc
+           DEPS op_registry device_context scope framework_proto
+           trainer_desc_proto glog lod_rank_table fleet_wrapper lodtensor_printer
+           feed_fetch_method graph_to_program_pass data_feed_proto
+           variable_helper timer fs shell)
+
+
+cc_test(data_feed_test SRCS data_feed_test.cc DEPS async_executor)
 cc_library(prune SRCS prune.cc DEPS framework_proto)
 cc_test(prune_test SRCS prune_test.cc DEPS op_info prune recurrent_op device_context)
 cc_test(var_type_inference_test SRCS var_type_inference_test.cc DEPS op_registry
         proto_desc)
+cc_test(inplace_op_inference_test SRCS inplace_op_inference_test.cc DEPS inplace_op_pass op_registry proto_desc op_info memory_optimize_helper pass_builder)
 cc_library(selected_rows SRCS selected_rows.cc DEPS tensor)
 cc_test(selected_rows_test SRCS selected_rows_test.cc DEPS selected_rows)
 
@@ -220,7 +240,7 @@ if (NOT WIN32)
 cc_test(rw_lock_test SRCS rw_lock_test.cc)
 endif (NOT WIN32)
 
-cc_library(dlpack_tensor SRCS dlpack_tensor.cc DEPS tensor dlpack)
+# cc_library(dlpack_tensor SRCS dlpack_tensor.cc DEPS tensor dlpack)
 cc_test(dlpack_tensor_test SRCS dlpack_tensor_test.cc DEPS dlpack_tensor glog)
 
 # Get the current working branch

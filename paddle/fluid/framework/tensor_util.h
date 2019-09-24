@@ -15,6 +15,7 @@ limitations under the License. */
 #pragma once
 #include <vector>
 #include "paddle/fluid/framework/data_type.h"
+#include "paddle/fluid/framework/dlpack_tensor.h"
 #include "paddle/fluid/framework/eigen.h"
 #include "paddle/fluid/framework/framework.pb.h"
 #include "paddle/fluid/framework/tensor.h"
@@ -72,6 +73,10 @@ void TensorToStream(std::ostream& os, const Tensor& tensor,
                     const platform::DeviceContext& dev_ctx);
 void TensorFromStream(std::istream& is, Tensor* tensor,
                       const platform::DeviceContext& dev_ctx);
+
+void TensorFromDLPack(const ::DLTensor& dl_tensor,
+                      const platform::DeviceContext& ctx,
+                      framework::Tensor* dst);
 
 //
 // The implementation of template functions.
@@ -146,7 +151,7 @@ void TensorToVector(const Tensor& src, std::vector<T>* dst) {
   dst->resize(src.numel());
   auto dst_ptr = static_cast<void*>(dst->data());
 
-  PADDLE_ENFORCE_EQ(platform::is_cpu_place(src.place()), true);
+  PADDLE_ENFORCE(platform::is_cpu_place(src.place()));
 
   memory::Copy(dst_place, dst_ptr, boost::get<platform::CPUPlace>(src.place()),
                src_ptr, size);
